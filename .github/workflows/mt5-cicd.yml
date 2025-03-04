@@ -1,0 +1,152 @@
+name: MT5 CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-and-deploy:
+    runs-on: windows-latest  # MT5编译需要Windows环境
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        
+      - name: 设置工作目录
+        run: |
+          echo "设置工作目录"
+          mkdir -p build
+      
+      - name: 下载并安装MT5
+        run: |
+          echo "开始下载MT5安装程序"
+          # 下载MT5安装程序
+          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile "mt5setup.exe"
+          
+          # 静默安装MT5（使用/auto参数进行静默安装）
+          echo "开始安装MT5"
+          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          
+          # MT5默认安装路径
+          $MT5_PATH = "$env:LOCALAPPDATA\Programs\MetaTrader 5"
+          echo "MT5安装路径: $MT5_PATH"
+          
+          # 等待安装完成
+          Start-Sleep -Seconds 30
+          
+          if (Test-Path "$MT5_PATH") {
+            echo "MT5安装成功"
+          } else {
+            echo "MT5安装失败"
+            exit 1
+          }
+      
+      - name: 编译MT5项目
+        run: |
+          echo "开始编译MT5项目"
+          
+          # MT5默认安装路径
+          $MT5_PATH = "$env:LOCALAPPDATA\Programs\MetaTrader 5"
+          $METAEDITOR_PATH = "$MT5_PATH\metaeditor64.exe"
+          
+          # 创建编译脚本
+          @"
+          #property show_inputs
+          int start()
+          {
+             string path = GetPathName();
+             string compile_file = path + "\\PositionMonitor.mq5";
+             int result = Compile(compile_file);
+             if(result == 0)
+                Print("Compilation successful");
+             else
+                Print("Compilation failed with error: ", result);
+             return(result);
+          }
+          "@ | Out-File -FilePath "compile.mq5" -Encoding ASCII
+          
+          # 使用MetaEditor编译项目
+          & "$METAEDITOR_PATH" /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
+          
+          # 检查编译结果
+          $log = Get-Content -Path "compile_log.txt" -ErrorAction SilentlyContinue
+          if ($log -match "Compilation successful") {
+            echo "编译成功"
+            # 复制编译后的文件到build目录
+            Copy-Item -Path "*.ex5" -Destination "build\" -ErrorAction SilentlyContinue
+          } else {
+            echo "编译失败，日志内容:"
+            Get-Content -Path "compile_log.txt"
+            exit 1
+          }
+      
+      - name: 打包编译结果
+        run: |
+          echo "打包编译结果"
+          Compress-Archive -Path "build\*" -DestinationPath "mt5-build.zip"
+      
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mt5-artifacts
+          path: mt5-build.zip
+      
+      - name: 配置SSH密钥
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.ALIYUN_SSH_PRIVATE_KEY }}
+      
+      - name: 部署到Windows服务器
+        env:
+          WINDOWS_HOST: ${{ secrets.WINDOWS_HOST }}
+          WINDOWS_USERNAME: ${{ secrets.WINDOWS_USERNAME }}
+          WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          # 使用WinRM或其他Windows远程管理工具
+          # 安装WinRM客户端
+          pip install pywinrm
+          
+          # 创建Python部署脚本
+          @"
+          import winrm
+          import os
+          import base64
+          
+          # 连接到Windows服务器
+          session = winrm.Session('$env:WINDOWS_HOST', auth=('$env:WINDOWS_USERNAME', '$env:WINDOWS_PASSWORD'))
+          
+          # 创建部署目录
+          session.run_ps('New-Item -Path "$env:DEPLOY_PATH" -ItemType Directory -Force')
+          
+          # 将文件转换为Base64
+          with open('mt5-build.zip', 'rb') as f:
+              file_data = base64.b64encode(f.read()).decode('utf-8')
+          
+          # 上传文件
+          script = f'''
+          $base64Data = "{file_data}"
+          $bytes = [Convert]::FromBase64String($base64Data)
+          [IO.File]::WriteAllBytes("$env:DEPLOY_PATH\\mt5-build.zip", $bytes)
+          '''
+          session.run_ps(script)
+          
+          # 执行部署脚本
+          deploy_script = '''
+          # 解压文件
+          Expand-Archive -Path "$env:DEPLOY_PATH\\mt5-build.zip" -DestinationPath "$env:DEPLOY_PATH" -Force
+          
+          # 启动MT5
+          Start-Process -FilePath "$env:DEPLOY_PATH\\terminal64.exe" -ArgumentList "/portable"
+          
+          Write-Output "部署完成"
+          '''
+          result = session.run_ps(deploy_script)
+          print(result.std_out.decode())
+          "@ | Out-File -FilePath "deploy.py" -Encoding UTF8
+          
+          # 执行部署脚本
+          python deploy.py 
