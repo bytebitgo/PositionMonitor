@@ -24,21 +24,77 @@ jobs:
         run: |
           echo "开始下载MT5解压版本"
           # 下载预打包的MT5解压版本
-          Invoke-WebRequest -Uri "http://yingcai.rgslb.link/MT5.zip" -OutFile "MT5.zip"
+          Invoke-WebRequest -Uri "http://yingcai.rgslb.link/MT5.zip" -OutFile "MT5.zip" -UseBasicParsing
+          
+          # 检查下载是否成功
+          if (!(Test-Path "MT5.zip")) {
+            echo "错误：MT5.zip下载失败"
+            exit 1
+          }
+          
+          # 显示下载文件信息
+          $fileInfo = Get-Item "MT5.zip"
+          echo "MT5.zip文件大小: $($fileInfo.Length / 1MB) MB"
+          echo "MT5.zip下载时间: $($fileInfo.LastWriteTime)"
+          
+          # 检查文件大小是否合理（至少应该有几十MB）
+          if ($fileInfo.Length -lt 10MB) {
+            echo "警告：MT5.zip文件大小异常小，可能下载不完整"
+          }
+          
+          # 创建解压目录
+          New-Item -Path "MT5_Extract" -ItemType Directory -Force
           
           # 解压MT5
           echo "开始解压MT5"
-          Expand-Archive -Path "MT5.zip" -DestinationPath "MT5" -Force
+          try {
+            Expand-Archive -Path "MT5.zip" -DestinationPath "MT5_Extract" -Force
+            echo "解压完成，检查解压结果"
+          }
+          catch {
+            echo "解压过程出错: $_"
+            exit 1
+          }
           
-          # 检查解压结果
-          if (Test-Path "MT5\terminal64.exe") {
-            echo "MT5解压成功"
-            echo "MT5路径: $pwd\MT5"
-            # 列出MT5目录内容
+          # 列出解压后的目录内容
+          echo "解压目录内容:"
+          Get-ChildItem -Path "MT5_Extract" -Recurse -Depth 1 | Select-Object FullName
+          
+          # 查找terminal64.exe文件
+          $terminalExe = Get-ChildItem -Path "MT5_Extract" -Filter "terminal64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          
+          if ($terminalExe) {
+            echo "找到terminal64.exe: $($terminalExe.FullName)"
+            $MT5_DIR = $terminalExe.Directory.FullName
+            echo "使用MT5目录: $MT5_DIR"
+            
+            # 创建MT5目录并复制文件
+            New-Item -Path "MT5" -ItemType Directory -Force
+            Copy-Item -Path "$MT5_DIR\*" -Destination "MT5\" -Recurse -Force
+            
+            echo "MT5目录内容:"
             Get-ChildItem -Path "MT5" | Select-Object Name, Length | Format-Table
           } else {
-            echo "MT5解压失败，未找到terminal64.exe"
-            exit 1
+            echo "在解压目录中未找到terminal64.exe"
+            
+            # 尝试查找metaeditor64.exe
+            $metaEditor = Get-ChildItem -Path "MT5_Extract" -Filter "metaeditor64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            
+            if ($metaEditor) {
+              echo "找到metaeditor64.exe: $($metaEditor.FullName)"
+              $MT5_DIR = $metaEditor.Directory.FullName
+              echo "使用包含MetaEditor的目录: $MT5_DIR"
+              
+              # 创建MT5目录并复制文件
+              New-Item -Path "MT5" -ItemType Directory -Force
+              Copy-Item -Path "$MT5_DIR\*" -Destination "MT5\" -Recurse -Force
+              
+              echo "MT5目录内容:"
+              Get-ChildItem -Path "MT5" | Select-Object Name, Length | Format-Table
+            } else {
+              echo "在解压目录中也未找到metaeditor64.exe，无法继续"
+              exit 1
+            }
           }
       
       - name: 编译MT5项目
@@ -47,16 +103,18 @@ jobs:
           
           # 设置MT5路径
           $MT5_PATH = "$pwd\MT5"
-          $METAEDITOR_PATH = "$MT5_PATH\metaeditor64.exe"
           
-          # 检查MetaEditor是否存在
-          if (!(Test-Path $METAEDITOR_PATH)) {
-            echo "错误：未找到MetaEditor，路径: $METAEDITOR_PATH"
+          # 查找MetaEditor
+          $metaEditorPath = Get-ChildItem -Path $MT5_PATH -Filter "metaeditor64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          
+          if (!$metaEditorPath) {
+            echo "错误：未找到MetaEditor"
             echo "MT5目录内容:"
-            Get-ChildItem -Path $MT5_PATH -Recurse -Depth 1 | Select-Object FullName
+            Get-ChildItem -Path $MT5_PATH -Recurse -Depth 2 | Select-Object FullName
             exit 1
           }
           
+          $METAEDITOR_PATH = $metaEditorPath
           echo "MetaEditor路径: $METAEDITOR_PATH"
           
           # 创建编译脚本
