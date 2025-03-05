@@ -2,10 +2,8 @@ name: MT5 CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:  # 允许手动触发
+    tags:
+      - 'v*'  # 只在推送标签时触发，标签格式为v开头，如v1.0.0
 
 jobs:
   build:
@@ -269,94 +267,27 @@ jobs:
           Compress-Archive -Path "build\*" -DestinationPath "mt5-build.zip" -Force
           echo "打包完成: mt5-build.zip"
       
+      - name: 获取标签版本
+        id: get_version
+        run: |
+          $TAG_NAME = "${{ github.ref_name }}"
+          echo "VERSION=$TAG_NAME" >> $env:GITHUB_OUTPUT
+          echo "标签版本: $TAG_NAME"
+      
+      - name: 创建GitHub Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          files: |
+            mt5-build.zip
+            build/*.ex5
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: mt5-artifacts
-          path: mt5-build.zip
-      
-      - name: 配置SSH密钥
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.ALIYUN_SSH_PRIVATE_KEY }}
-      
-      - name: 部署到Windows服务器
-        env:
-          WINDOWS_HOST: ${{ secrets.WINDOWS_HOST }}
-          WINDOWS_USERNAME: ${{ secrets.WINDOWS_USERNAME }}
-          WINDOWS_PASSWORD: ${{ secrets.WINDOWS_PASSWORD }}
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-        run: |
-          # 使用WinRM或其他Windows远程管理工具
-          # 安装WinRM客户端
-          pip install pywinrm
-          
-          # 创建Python部署脚本
-          @"
-          import winrm
-          import os
-          import base64
-          
-          # 连接到Windows服务器
-          session = winrm.Session('$env:WINDOWS_HOST', auth=('$env:WINDOWS_USERNAME', '$env:WINDOWS_PASSWORD'))
-          
-          # 创建部署目录
-          session.run_ps('New-Item -Path "$env:DEPLOY_PATH" -ItemType Directory -Force')
-          
-          # 将文件转换为Base64
-          with open('mt5-build.zip', 'rb') as f:
-              file_data = base64.b64encode(f.read()).decode('utf-8')
-          
-          # 上传文件
-          script = f'''
-          $base64Data = "{file_data}"
-          $bytes = [Convert]::FromBase64String($base64Data)
-          [IO.File]::WriteAllBytes("$env:DEPLOY_PATH\\mt5-build.zip", $bytes)
-          '''
-          session.run_ps(script)
-          
-          # 执行部署脚本
-          deploy_script = '''
-          # 解压文件
-          Expand-Archive -Path "$env:DEPLOY_PATH\\mt5-build.zip" -DestinationPath "$env:DEPLOY_PATH" -Force
-          
-          # 确保目标服务器上的MT5目录存在
-          if (!(Test-Path "$env:DEPLOY_PATH\\MT5")) {
-              Write-Output "创建MT5目录"
-              New-Item -Path "$env:DEPLOY_PATH\\MT5" -ItemType Directory -Force
-          }
-          
-          # 创建portable.dat文件以启用便携模式
-          Write-Output "创建portable.dat文件以启用便携模式"
-          New-Item -Path "$env:DEPLOY_PATH\\MT5\\portable.dat" -ItemType File -Force
-          
-          # 复制编译后的文件到MT5的MQL5/Experts目录
-          if (!(Test-Path "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts")) {
-              Write-Output "创建MQL5/Experts目录"
-              New-Item -Path "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts" -ItemType Directory -Force
-          }
-          
-          # 复制编译后的文件
-          Write-Output "复制编译后的文件到MT5/MQL5/Experts目录"
-          Copy-Item -Path "$env:DEPLOY_PATH\\*.ex5" -Destination "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts\\" -Force
-          
-          # 关闭可能正在运行的MT5实例
-          Write-Output "关闭可能正在运行的MT5实例"
-          Stop-Process -Name "terminal64" -Force -ErrorAction SilentlyContinue
-          
-          # 启动MT5（以便携模式）
-          if (Test-Path "$env:DEPLOY_PATH\\MT5\\terminal64.exe") {
-              Write-Output "启动MT5（便携模式）"
-              Start-Process -FilePath "$env:DEPLOY_PATH\\MT5\\terminal64.exe" -ArgumentList "/portable"
-          } else {
-              Write-Output "警告：未找到MT5终端程序，请确保MT5已正确安装"
-          }
-          
-          Write-Output "部署完成"
-          '''
-          result = session.run_ps(deploy_script)
-          print(result.std_out.decode())
-          "@ | Out-File -FilePath "deploy.py" -Encoding UTF8
-          
-          # 执行部署脚本
-          python deploy.py 
+          path: mt5-build.zip 
