@@ -72,6 +72,10 @@ jobs:
             New-Item -Path "MT5" -ItemType Directory -Force
             Copy-Item -Path "$MT5_DIR\*" -Destination "MT5\" -Recurse -Force
             
+            # 创建portable.dat文件以启用便携模式
+            echo "创建portable.dat文件以启用便携模式"
+            New-Item -Path "MT5\portable.dat" -ItemType File -Force
+            
             echo "MT5目录内容:"
             Get-ChildItem -Path "MT5" | Select-Object Name, Length | Format-Table
           } else {
@@ -88,6 +92,10 @@ jobs:
               # 创建MT5目录并复制文件
               New-Item -Path "MT5" -ItemType Directory -Force
               Copy-Item -Path "$MT5_DIR\*" -Destination "MT5\" -Recurse -Force
+              
+              # 创建portable.dat文件以启用便携模式
+              echo "创建portable.dat文件以启用便携模式"
+              New-Item -Path "MT5\portable.dat" -ItemType File -Force
               
               echo "MT5目录内容:"
               Get-ChildItem -Path "MT5" | Select-Object Name, Length | Format-Table
@@ -145,7 +153,7 @@ jobs:
           
           # 使用MetaEditor编译项目
           echo "执行编译命令"
-          & "$METAEDITOR_PATH" /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
+          & "$METAEDITOR_PATH" /portable /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
           
           # 等待编译完成
           Start-Sleep -Seconds 10
@@ -260,8 +268,33 @@ jobs:
           # 解压文件
           Expand-Archive -Path "$env:DEPLOY_PATH\\mt5-build.zip" -DestinationPath "$env:DEPLOY_PATH" -Force
           
-          # 启动MT5
-          Start-Process -FilePath "$env:DEPLOY_PATH\\terminal64.exe" -ArgumentList "/portable"
+          # 确保目标服务器上的MT5目录存在
+          if (!(Test-Path "$env:DEPLOY_PATH\\MT5")) {
+              Write-Output "创建MT5目录"
+              New-Item -Path "$env:DEPLOY_PATH\\MT5" -ItemType Directory -Force
+          }
+          
+          # 创建portable.dat文件以启用便携模式
+          Write-Output "创建portable.dat文件以启用便携模式"
+          New-Item -Path "$env:DEPLOY_PATH\\MT5\\portable.dat" -ItemType File -Force
+          
+          # 复制编译后的文件到MT5的MQL5/Experts目录
+          if (!(Test-Path "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts")) {
+              Write-Output "创建MQL5/Experts目录"
+              New-Item -Path "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts" -ItemType Directory -Force
+          }
+          
+          # 复制编译后的文件
+          Write-Output "复制编译后的文件到MT5/MQL5/Experts目录"
+          Copy-Item -Path "$env:DEPLOY_PATH\\*.ex5" -Destination "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts\\" -Force
+          
+          # 启动MT5（以便携模式）
+          if (Test-Path "$env:DEPLOY_PATH\\MT5\\terminal64.exe") {
+              Write-Output "启动MT5（便携模式）"
+              Start-Process -FilePath "$env:DEPLOY_PATH\\MT5\\terminal64.exe" -ArgumentList "/portable"
+          } else {
+              Write-Output "警告：未找到MT5终端程序，请确保MT5已正确安装"
+          }
           
           Write-Output "部署完成"
           '''
