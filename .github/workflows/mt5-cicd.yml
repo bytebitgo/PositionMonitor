@@ -8,7 +8,7 @@ on:
   workflow_dispatch:  # 允许手动触发
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: windows-latest  # MT5编译需要Windows环境
     
     steps:
@@ -20,27 +20,24 @@ jobs:
           echo "设置工作目录"
           mkdir -p build
       
-      - name: 下载并安装MT5
+      - name: 下载并解压MT5
         run: |
-          echo "开始下载MT5安装程序"
-          # 下载MT5安装程序
-          Invoke-WebRequest -Uri "https://download.mql5.com/cdn/web/metaquotes.software.corp/mt5/mt5setup.exe" -OutFile "mt5setup.exe"
+          echo "开始下载MT5解压版本"
+          # 下载预打包的MT5解压版本
+          Invoke-WebRequest -Uri "http://yingcai.rgslb.link/MT5.zip" -OutFile "MT5.zip"
           
-          # 静默安装MT5（使用/auto参数进行静默安装）
-          echo "开始安装MT5"
-          Start-Process -FilePath ".\mt5setup.exe" -ArgumentList "/auto" -Wait
+          # 解压MT5
+          echo "开始解压MT5"
+          Expand-Archive -Path "MT5.zip" -DestinationPath "MT5" -Force
           
-          # MT5默认安装路径
-          $MT5_PATH = "$env:LOCALAPPDATA\Programs\MetaTrader 5"
-          echo "MT5安装路径: $MT5_PATH"
-          
-          # 等待安装完成
-          Start-Sleep -Seconds 30
-          
-          if (Test-Path "$MT5_PATH") {
-            echo "MT5安装成功"
+          # 检查解压结果
+          if (Test-Path "MT5\terminal64.exe") {
+            echo "MT5解压成功"
+            echo "MT5路径: $pwd\MT5"
+            # 列出MT5目录内容
+            Get-ChildItem -Path "MT5" | Select-Object Name, Length | Format-Table
           } else {
-            echo "MT5安装失败"
+            echo "MT5解压失败，未找到terminal64.exe"
             exit 1
           }
       
@@ -48,9 +45,19 @@ jobs:
         run: |
           echo "开始编译MT5项目"
           
-          # MT5默认安装路径
-          $MT5_PATH = "$env:LOCALAPPDATA\Programs\MetaTrader 5"
+          # 设置MT5路径
+          $MT5_PATH = "$pwd\MT5"
           $METAEDITOR_PATH = "$MT5_PATH\metaeditor64.exe"
+          
+          # 检查MetaEditor是否存在
+          if (!(Test-Path $METAEDITOR_PATH)) {
+            echo "错误：未找到MetaEditor，路径: $METAEDITOR_PATH"
+            echo "MT5目录内容:"
+            Get-ChildItem -Path $MT5_PATH -Recurse -Depth 1 | Select-Object FullName
+            exit 1
+          }
+          
+          echo "MetaEditor路径: $METAEDITOR_PATH"
           
           # 创建编译脚本
           @"
@@ -68,25 +75,81 @@ jobs:
           }
           "@ | Out-File -FilePath "compile.mq5" -Encoding ASCII
           
+          # 显示当前目录内容
+          echo "当前目录内容:"
+          Get-ChildItem | Select-Object Name, Length | Format-Table
+          
+          # 检查源文件是否存在
+          if (!(Test-Path "PositionMonitor.mq5")) {
+            echo "错误：未找到源文件 PositionMonitor.mq5"
+            exit 1
+          }
+          
           # 使用MetaEditor编译项目
+          echo "执行编译命令"
           & "$METAEDITOR_PATH" /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
           
-          # 检查编译结果
-          $log = Get-Content -Path "compile_log.txt" -ErrorAction SilentlyContinue
-          if ($log -match "Compilation successful") {
-            echo "编译成功"
-            # 复制编译后的文件到build目录
-            Copy-Item -Path "*.ex5" -Destination "build\" -ErrorAction SilentlyContinue
+          # 等待编译完成
+          Start-Sleep -Seconds 10
+          
+          # 检查编译日志是否存在
+          if (!(Test-Path "compile_log.txt")) {
+            echo "警告：未找到编译日志文件"
+            # 尝试查找编译结果
+            $ex5Files = Get-ChildItem -Path "." -Filter "*.ex5"
+            if ($ex5Files.Count -gt 0) {
+              echo "找到编译后的文件:"
+              $ex5Files | Select-Object Name, Length | Format-Table
+            } else {
+              echo "未找到编译后的文件"
+              exit 1
+            }
           } else {
-            echo "编译失败，日志内容:"
-            Get-Content -Path "compile_log.txt"
-            exit 1
+            # 检查编译结果
+            $log = Get-Content -Path "compile_log.txt" -ErrorAction SilentlyContinue
+            echo "编译日志内容:"
+            echo $log
+            
+            if ($log -match "Compilation successful" -or (Get-ChildItem -Path "." -Filter "*.ex5").Count -gt 0) {
+              echo "编译成功"
+              # 复制编译后的文件到build目录
+              Copy-Item -Path "*.ex5" -Destination "build\" -ErrorAction SilentlyContinue
+              echo "build目录内容:"
+              Get-ChildItem -Path "build" | Select-Object Name, Length | Format-Table
+            } else {
+              echo "编译失败，日志内容:"
+              Get-Content -Path "compile_log.txt"
+              exit 1
+            }
           }
       
       - name: 打包编译结果
         run: |
           echo "打包编译结果"
-          Compress-Archive -Path "build\*" -DestinationPath "mt5-build.zip"
+          # 检查build目录是否有文件
+          $buildFiles = Get-ChildItem -Path "build" -ErrorAction SilentlyContinue
+          if ($buildFiles.Count -eq 0) {
+            echo "警告：build目录为空，尝试查找项目根目录中的ex5文件"
+            $ex5Files = Get-ChildItem -Path "." -Filter "*.ex5" -ErrorAction SilentlyContinue
+            if ($ex5Files.Count -gt 0) {
+              echo "找到ex5文件，复制到build目录"
+              Copy-Item -Path "*.ex5" -Destination "build\" -ErrorAction SilentlyContinue
+            } else {
+              echo "错误：未找到任何ex5文件"
+              exit 1
+            }
+          }
+          
+          # 再次检查build目录
+          $buildFiles = Get-ChildItem -Path "build" -ErrorAction SilentlyContinue
+          if ($buildFiles.Count -eq 0) {
+            echo "错误：build目录仍为空，无法打包"
+            exit 1
+          }
+          
+          # 打包文件
+          Compress-Archive -Path "build\*" -DestinationPath "mt5-build.zip" -Force
+          echo "打包完成: mt5-build.zip"
       
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
