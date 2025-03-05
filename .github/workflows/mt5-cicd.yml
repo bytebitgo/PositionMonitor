@@ -105,6 +105,52 @@ jobs:
             }
           }
       
+      - name: 启动MT5组件（便携模式）
+        run: |
+          echo "以便携模式启动MT5组件"
+          
+          # 设置MT5路径
+          $MT5_PATH = "$pwd\MT5"
+          
+          # 启动terminal64.exe（如果存在）
+          $terminalPath = Get-ChildItem -Path $MT5_PATH -Filter "terminal64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($terminalPath) {
+            echo "启动terminal64.exe（便携模式）"
+            Start-Process -FilePath $terminalPath -ArgumentList "/portable" -WindowStyle Minimized
+            echo "等待terminal64.exe初始化..."
+            Start-Sleep -Seconds 30
+            
+            # 检查是否成功启动
+            $terminalProcess = Get-Process -Name "terminal64" -ErrorAction SilentlyContinue
+            if ($terminalProcess) {
+              echo "terminal64.exe已成功启动"
+            } else {
+              echo "警告：terminal64.exe可能未成功启动"
+            }
+          } else {
+            echo "未找到terminal64.exe，跳过启动"
+          }
+          
+          # 查找并启动metaeditor64.exe
+          $metaEditorPath = Get-ChildItem -Path $MT5_PATH -Filter "metaeditor64.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
+          if ($metaEditorPath) {
+            echo "启动metaeditor64.exe（便携模式）"
+            Start-Process -FilePath $metaEditorPath -ArgumentList "/portable" -WindowStyle Minimized
+            echo "等待metaeditor64.exe初始化..."
+            Start-Sleep -Seconds 20
+            
+            # 检查是否成功启动
+            $metaEditorProcess = Get-Process -Name "metaeditor64" -ErrorAction SilentlyContinue
+            if ($metaEditorProcess) {
+              echo "metaeditor64.exe已成功启动"
+            } else {
+              echo "警告：metaeditor64.exe可能未成功启动"
+            }
+          } else {
+            echo "错误：未找到metaeditor64.exe，无法继续"
+            exit 1
+          }
+      
       - name: 编译MT5项目
         run: |
           echo "开始编译MT5项目"
@@ -151,6 +197,14 @@ jobs:
             exit 1
           }
           
+          # 关闭之前启动的MetaEditor进程（如果存在）
+          $metaEditorProcess = Get-Process -Name "metaeditor64" -ErrorAction SilentlyContinue
+          if ($metaEditorProcess) {
+            echo "关闭之前启动的MetaEditor进程"
+            Stop-Process -Name "metaeditor64" -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+          }
+          
           # 使用MetaEditor编译项目
           echo "执行编译命令"
           & "$METAEDITOR_PATH" /portable /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
@@ -188,6 +242,11 @@ jobs:
               exit 1
             }
           }
+          
+          # 关闭所有MT5相关进程
+          echo "关闭所有MT5相关进程"
+          Stop-Process -Name "terminal64" -Force -ErrorAction SilentlyContinue
+          Stop-Process -Name "metaeditor64" -Force -ErrorAction SilentlyContinue
       
       - name: 打包编译结果
         run: |
@@ -287,6 +346,10 @@ jobs:
           # 复制编译后的文件
           Write-Output "复制编译后的文件到MT5/MQL5/Experts目录"
           Copy-Item -Path "$env:DEPLOY_PATH\\*.ex5" -Destination "$env:DEPLOY_PATH\\MT5\\MQL5\\Experts\\" -Force
+          
+          # 关闭可能正在运行的MT5实例
+          Write-Output "关闭可能正在运行的MT5实例"
+          Stop-Process -Name "terminal64" -Force -ErrorAction SilentlyContinue
           
           # 启动MT5（以便携模式）
           if (Test-Path "$env:DEPLOY_PATH\\MT5\\terminal64.exe") {
