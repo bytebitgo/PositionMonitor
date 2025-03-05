@@ -5,6 +5,9 @@ on:
     tags:
       - 'v*'  # 只在推送标签时触发，标签格式为v开头，如v1.0.0
 
+permissions:
+  contents: write  # 明确授予写入仓库内容的权限
+
 jobs:
   build:
     runs-on: windows-latest  # MT5编译需要Windows环境
@@ -275,8 +278,9 @@ jobs:
           echo "标签版本: $TAG_NAME"
       
       - name: 创建GitHub Release
-        id: create_release
         uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           name: Release ${{ steps.get_version.outputs.VERSION }}
           draft: false
@@ -284,7 +288,6 @@ jobs:
           files: |
             mt5-build.zip
             build/*.ex5
-          token: ${{ secrets.GITHUB_TOKEN }}
           
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
