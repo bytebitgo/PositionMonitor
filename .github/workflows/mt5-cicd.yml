@@ -171,29 +171,18 @@ jobs:
           $METAEDITOR_PATH = $metaEditorPath
           echo "MetaEditor路径: $METAEDITOR_PATH"
           
-          # 创建编译脚本
-          @"
-          #property show_inputs
-          int start()
-          {
-             string path = GetPathName();
-             string compile_file = path + "\\PositionMonitor.mq5";
-             int result = Compile(compile_file);
-             if(result == 0)
-                Print("Compilation successful");
-             else
-                Print("Compilation failed with error: ", result);
-             return(result);
-          }
-          "@ | Out-File -FilePath "compile.mq5" -Encoding ASCII
-          
           # 显示当前目录内容
           echo "当前目录内容:"
           Get-ChildItem | Select-Object Name, Length | Format-Table
           
+          # 获取项目根目录和MQ5文件的完整路径
+          $PROJECT_ROOT = "$pwd"
+          $MQ5_FILE_PATH = "$PROJECT_ROOT\PositionMonitor.mq5"
+          $LOG_FILE_PATH = "$PROJECT_ROOT\compile.log"
+          
           # 检查源文件是否存在
-          if (!(Test-Path "PositionMonitor.mq5")) {
-            echo "错误：未找到源文件 PositionMonitor.mq5"
+          if (!(Test-Path $MQ5_FILE_PATH)) {
+            echo "错误：未找到源文件 $MQ5_FILE_PATH"
             exit 1
           }
           
@@ -205,16 +194,20 @@ jobs:
             Start-Sleep -Seconds 2
           }
           
-          # 使用MetaEditor编译项目
+          # 使用MetaEditor编译项目（使用新的命令格式）
           echo "执行编译命令"
-          & "$METAEDITOR_PATH" /portable /compile:"compile.mq5" /log:"compile_log.txt" /inc:"$pwd"
+          echo "编译文件: $MQ5_FILE_PATH"
+          echo "日志文件: $LOG_FILE_PATH"
+          echo "包含目录: $PROJECT_ROOT"
+          
+          & "$METAEDITOR_PATH" /portable /compile:"$MQ5_FILE_PATH" /log:"$LOG_FILE_PATH" /include:"$PROJECT_ROOT"
           
           # 等待编译完成
           Start-Sleep -Seconds 10
           
           # 检查编译日志是否存在
-          if (!(Test-Path "compile_log.txt")) {
-            echo "警告：未找到编译日志文件"
+          if (!(Test-Path $LOG_FILE_PATH)) {
+            echo "警告：未找到编译日志文件 $LOG_FILE_PATH"
             # 尝试查找编译结果
             $ex5Files = Get-ChildItem -Path "." -Filter "*.ex5"
             if ($ex5Files.Count -gt 0) {
@@ -226,11 +219,11 @@ jobs:
             }
           } else {
             # 检查编译结果
-            $log = Get-Content -Path "compile_log.txt" -ErrorAction SilentlyContinue
+            $log = Get-Content -Path $LOG_FILE_PATH -ErrorAction SilentlyContinue
             echo "编译日志内容:"
             echo $log
             
-            if ($log -match "Compilation successful" -or (Get-ChildItem -Path "." -Filter "*.ex5").Count -gt 0) {
+            if ($log -match "successfully compiled" -or $log -match "编译成功" -or (Get-ChildItem -Path "." -Filter "*.ex5").Count -gt 0) {
               echo "编译成功"
               # 复制编译后的文件到build目录
               Copy-Item -Path "*.ex5" -Destination "build\" -ErrorAction SilentlyContinue
@@ -238,7 +231,7 @@ jobs:
               Get-ChildItem -Path "build" | Select-Object Name, Length | Format-Table
             } else {
               echo "编译失败，日志内容:"
-              Get-Content -Path "compile_log.txt"
+              Get-Content -Path $LOG_FILE_PATH
               exit 1
             }
           }
