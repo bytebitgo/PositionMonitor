@@ -221,7 +221,7 @@ void SendDingDingAlert(const PositionStats &stats) {
     
     // 检查MT5内置消息推送是否启用（同时检查系统设置和用户设置）
     bool isNotificationsEnabled = EnableMT5Notification && (bool)TerminalInfoInteger(TERMINAL_NOTIFICATIONS_ENABLED);
-    bool isPushEnabled = EnableMT5PushNotification && (bool)TerminalInfoInteger(TERMINAL_EMAIL_ENABLED);  // 使用邮件通知替代推送通知
+    bool isPushEnabled = EnableMT5PushNotification && (bool)TerminalInfoInteger(TERMINAL_NOTIFICATIONS_ENABLED);  // 使用推送通知
     
     // 构建消息内容
     string alertMessage = stats.symbol + " 浮亏警报\n" +
