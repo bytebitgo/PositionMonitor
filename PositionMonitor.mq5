@@ -19,6 +19,8 @@ input int AlertIntervalSeconds = 60;      // 报警时间间隔(秒)
 input int TimerIntervalSeconds = 10;      // 定时器间隔(秒)
 input int StatsReportIntervalSeconds = 10800;  // 统计报表发送间隔(秒)
 input int StatsSaveIntervalMinutes = 10;    // 统计数据保存间隔(分钟)
+input bool EnableMT5Notification = false;    // 启用MT5内置通知
+input bool EnableMT5PushNotification = false;  // 启用MT5推送通知
 
 // 全局变量
 datetime lastAlertTime = 0;
@@ -216,6 +218,32 @@ void GetPositionStats(PositionStats &stats) {
 void SendDingDingAlert(const PositionStats &stats) {
     datetime now = TimeCurrent();
     string currentTime = TimeToString(now, TIME_DATE|TIME_MINUTES);
+    
+    // 检查MT5内置消息推送是否启用（同时检查系统设置和用户设置）
+    bool isNotificationsEnabled = EnableMT5Notification && (bool)TerminalInfoInteger(TERMINAL_NOTIFICATIONS_ENABLED);
+    bool isPushEnabled = EnableMT5PushNotification && (bool)TerminalInfoInteger(TERMINAL_PUSH_NOTIFICATIONS_ENABLED);
+    
+    // 构建消息内容
+    string alertMessage = stats.symbol + " 浮亏警报\n" +
+                         "总持仓: " + DoubleToString(stats.totalVolume, 2) + "手\n" +
+                         "总盈亏: " + DoubleToString(stats.totalProfit, 2) + "\n" +
+                         "多单: " + IntegerToString(stats.longCount) + "笔, " + 
+                         DoubleToString(stats.longVolume, 2) + "手, " + 
+                         DoubleToString(stats.longProfit, 2) + "\n" +
+                         "空单: " + IntegerToString(stats.shortCount) + "笔, " + 
+                         DoubleToString(stats.shortVolume, 2) + "手, " + 
+                         DoubleToString(stats.shortProfit, 2);
+    
+    // 如果MT5内置消息推送已启用，发送内置通知
+    if(isNotificationsEnabled) {
+        SendNotification(alertMessage);  // 发送到移动终端
+    }
+    
+    // 如果MT5推送通知已启用，发送推送通知
+    if(isPushEnabled) {
+        string pushMessage = DingDingAuthTag + ": " + alertMessage;
+        SendNotification(pushMessage);  // 发送推送通知
+    }
     
     // 构建markdown内容
     string title = "[" + DingDingAuthTag + "] " + stats.symbol + "持仓监控报警";
